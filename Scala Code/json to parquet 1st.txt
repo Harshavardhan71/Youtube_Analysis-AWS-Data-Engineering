@@ -1,0 +1,41 @@
+package youtube_aws_maven
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions._
+
+object cleanedObj {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("Youtube AWS Project")
+      .config("spark.master", "local")
+      .getOrCreate()
+
+    import spark.implicits._
+
+    //    read cleaned data
+    val cleanedjsonDF = spark.read.format("parquet").load("file:///D:/projects/GITHUB PROJECT/youtube aws/OUTPUT_DATA/partitioned*")
+//    .load("s3://dep-onyoutube-rawprocessed-bronze/youtube/raw_statistics/JSON/partitioned*")
+    //    cleanedjsonDF.show()
+    //    cleanedjsonDF.printSchema()
+    val cleanedcsvDF = spark.read.format("parquet").load("file:///D:/projects/GITHUB PROJECT/youtube aws/OUTPUT_DATA_csv/partitioned*")
+//    .load("s3://dep-onyoutube-rawprocessed-bronze/youtube/raw_statistics/CSV/partitioned*")
+    //    cleanedcsvDF.show()
+    //    cleanedcsvDF.printSchema()
+
+    //    join the dataframes: inner join
+
+    val joinDF = cleanedjsonDF.join(cleanedcsvDF, cleanedjsonDF("id") === cleanedcsvDF("category_id"), "inner")
+    //    joinDF.show()
+    //    joinDF.printSchema()
+
+    joinDF.write
+      .format("parquet")
+      .partitionBy("id") // Partition data by the 'id' column
+      .mode("overwrite")
+      .save("file:///D:/projects/GITHUB PROJECT/youtube aws/joined_data")
+
+//      .save("s3://dep-onyoutube-rawprocessed-silver/joined_data")
+
+        println("done")
+  }
+}

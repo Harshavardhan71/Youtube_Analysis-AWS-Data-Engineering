@@ -1,0 +1,64 @@
+package youtube_aws_maven
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions._
+
+object rawcsvObj {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("Youtube AWS Project")
+      .config("spark.master", "local")
+      .getOrCreate()
+
+    import spark.implicits._
+    //	====================================================================================================================================================================================================================
+
+    println("======read files========")
+
+    val df = spark.read.format("csv").option("header", true).option("inferSchema", true).load("file:///D:/projects/GITHUB PROJECT/youtube aws/SOURCE DATA/csvfiles/*/*.csv")
+    //    .load("s3://dataengineeringprojects-sourcefiles/youtube/raw_statistics/*/*.csv")
+    //    df.show()
+    //    df.printSchema()
+
+    // Extract folder name and then get the last two characters
+    val df1 = df.withColumn("folderName", regexp_extract(input_file_name(), "csvfiles/([^/]+)/[^/]+$", 1))
+      .withColumn("region", substring(col("folderName"), 8, 2))
+      .drop("folderName")
+    //        df1.show()
+    //    df1.printSchema()
+
+    // Typecast columns and select
+    val findf = df1.selectExpr(
+      "video_id",
+      "trending_date",
+      "title",
+      "channel_title",
+      "cast(category_id as int) as category_id",
+      "publish_time",
+      "tags",
+      "cast(views as int) as views",
+      "cast(likes as int) as likes",
+      "cast(dislikes as int) as dislikes",
+      "cast(comment_count as int) as comment_count",
+      "thumbnail_link",
+      "cast(comments_disabled as boolean) as comments_disabled",
+      "cast(ratings_disabled as boolean) as ratings_disabled",
+      "cast(video_error_or_removed as boolean) as video_error_or_removed",
+      "description",
+      "region")
+
+//        findf.show()
+//        findf.printSchema()
+
+        // Write the DataFrame to Parquet format, partitioned by the 'region' column
+        findf.write
+          .format("parquet")
+          .partitionBy("region") // Partition data by the 'region' column
+          .mode("overwrite")
+          .save("file:///D:/projects/GITHUB PROJECT/youtube aws/OUTPUT_DATA_csv/partitioned")
+    //      .save("s3://dep-onyoutube-rawprocessed-bronze/youtube/raw_statistics/CSV/partitioned")
+
+        println("======done========")
+
+  }
+}

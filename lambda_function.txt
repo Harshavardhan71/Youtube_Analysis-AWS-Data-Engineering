@@ -1,0 +1,137 @@
+import json
+import boto3
+
+def lambda_handler(event, context):
+    # Extract the S3 bucket name and file key from the event
+    if 'Records' in event and len(event['Records']) > 0:
+        s3_event = event['Records'][0]
+        bucket_name = s3_event['s3']['bucket']['name']
+        object_key = s3_event['s3']['object']['key']
+        
+        # Log the S3 event details
+        print(f"Received event: Bucket: {bucket_name}, Key: {object_key}")
+        
+        # Check if the file is uploaded to the 'trigger' folder
+        if object_key.startswith('trigger'):
+            print(f"File '{object_key}' uploaded to bucket '{bucket_name}' in folder 'trigger'")
+            
+            # Define the EMR client
+            emr_client = boto3.client('emr')
+            
+            # Check if a cluster with the same name already exists
+            existing_clusters = emr_client.list_clusters(
+                ClusterStates=['STARTING', 'BOOTSTRAPPING', 'RUNNING', 'WAITING']
+            )['Clusters']
+            
+            cluster_name = 'youtube_cluster'
+            existing_cluster_names = [cluster['Name'] for cluster in existing_clusters]
+            
+            if cluster_name in existing_cluster_names:
+                print(f"A cluster with the name '{cluster_name}' already exists. Skipping cluster creation.")
+                return {
+                    'statusCode': 200,
+                    'body': 'Cluster with the same name already exists'
+                }
+            
+            # Specify the roles
+            service_role = "arn:aws:iam::084828597678:role/EMR_DefaultRole"  # Service role
+            job_flow_role = "EMR_EC2_DefaultRole"  # Instance profile
+            
+            try:
+                # Trigger EMR cluster creation
+                response = emr_client.run_job_flow(
+                    Name=cluster_name,
+                    ReleaseLabel='emr-6.4.0',  # EMR version
+                    LogUri=f's3://{bucket_name}/logs/',  # Log URI
+                    ServiceRole=service_role,  # IAM service role
+                    JobFlowRole=job_flow_role,  # IAM instance profile
+                    Instances={
+                        'InstanceGroups': [
+                            {
+                                'Name': 'Master node',
+                                'InstanceRole': 'MASTER',
+                                'InstanceType': 'm5.xlarge',  # Supported instance type
+                                'InstanceCount': 1,
+                            },
+                            {
+                                'Name': 'Core nodes',
+                                'InstanceRole': 'CORE',
+                                'InstanceType': 'm5.xlarge',
+                                'InstanceCount': 2,
+                            },
+                        ],
+                        'KeepJobFlowAliveWhenNoSteps': False,
+                    },
+                    Applications=[{'Name': 'Spark'}, {'Name': 'Zeppelin'}],  # Applications
+                    VisibleToAllUsers=True,
+                    Tags=[{'Key': 'Name', 'Value': 'youtube_cluster'}],
+                    Steps=[
+                        {
+                            'Name': 'Raw csv job',
+                            'ActionOnFailure': 'CONTINUE',
+                            'HadoopJarStep': {
+                                'Jar': 'command-runner.jar',
+                                'Args': [
+                                    'spark-submit',
+                                    '--deploy-mode', 'cluster',
+                                    '--class', 'youtube_aws_maven.rawcsvObj',
+                                    f's3://{bucket_name}/jar_files/youtube_aws_maven.jar',
+                                ],
+                            }
+                        },
+                        {
+                            'Name': 'Raw json job',
+                            'ActionOnFailure': 'CONTINUE',
+                            'HadoopJarStep': {
+                                'Jar': 'command-runner.jar',
+                                'Args': [
+                                    'spark-submit',
+                                    '--deploy-mode', 'cluster',
+                                    '--class', 'youtube_aws_maven.rawjsonObj',
+                                    f's3://{bucket_name}/jar_files/youtube_aws_maven.jar',
+                                ],
+                            }
+                        },
+                        {
+                            'Name': 'Join cleaned data job',
+                            'ActionOnFailure': 'CONTINUE',
+                            'HadoopJarStep': {
+                                'Jar': 'command-runner.jar',
+                                'Args': [
+                                    'spark-submit',
+                                    '--deploy-mode', 'cluster',
+                                    '--class', 'youtube_aws_maven.cleanedObj',
+                                    f's3://{bucket_name}/jar_files/youtube_aws_maven.jar',
+                                ],
+                            }
+                        }
+                    ],
+                    ScaleDownBehavior='TERMINATE_AT_TASK_COMPLETION'
+                )
+                
+                print("EMR cluster started successfully.")
+                
+                return {
+                    'statusCode': 200,
+                    'body': 'EMR cluster started and Spark jobs submitted'
+                }
+            
+            except Exception as e:
+                print(f"Error starting EMR cluster: {e}")
+                return {
+                    'statusCode': 500,
+                    'body': f'Error starting EMR cluster: {str(e)}'
+                }
+        
+        else:
+            print(f"File '{object_key}' uploaded to bucket '{bucket_name}' but not in folder 'trigger'")
+            return {
+                'statusCode': 200,
+                'body': 'File not in trigger folder, no action taken'
+            }
+    else:
+        print("No S3 event found")
+        return {
+            'statusCode': 400,
+            'body': 'No S3 event found'
+        } 
